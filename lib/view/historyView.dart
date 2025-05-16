@@ -57,7 +57,6 @@ class HistoryScreen extends StatelessWidget {
       child: GetBuilder<GeoFenceHistoryController>(
         initState: (_) {
           // Ensure map position is initialized
-          geofenceController.requestPermissions().then((_) => geofenceController.startLocationTracking());
           geoFenceHistoryController.initializeMapPosition();
         },
         builder: (controller) {

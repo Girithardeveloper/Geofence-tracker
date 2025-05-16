@@ -20,7 +20,7 @@ class GeofenceController extends GetxController {
   var currentPosition = Rxn<Position>();
   var currentLat = ''.obs;
   var currentLong = ''.obs;
-  var isTracking = false.obs; // Reintroduced isTracking
+  var isTracking = false.obs;
 
   static int _notificationId = 0;
   static final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
@@ -32,11 +32,11 @@ class GeofenceController extends GetxController {
     super.onInit();
     logger.i('GeofenceController initialized');
     initializeNotifications().then((_) {
-      initializeBackgroundService();
       loadGeofences();
       loadHistory();
       requestPermissions().then((_) {
-        logger.i('Permissions granted, starting location tracking');
+        logger.i('Permissions granted, starting background service and tracking');
+        initializeBackgroundService();
         startLocationTracking();
       }).catchError((e) {
         logger.e('Error requesting permissions: $e');
@@ -62,10 +62,9 @@ class GeofenceController extends GetxController {
       );
       bool? initialized = await flutterLocalNotificationsPlugin.initialize(initializationSettings);
       if (initialized != true) {
-        logger.e('Notification initialization returned false');
+        logger.e('Notification initialization failed');
         throw Exception('Failed to initialize notifications');
       }
-
       if (Platform.isAndroid) {
         const AndroidNotificationChannel backgroundChannel = AndroidNotificationChannel(
           'geofence_background',
@@ -86,7 +85,7 @@ class GeofenceController extends GetxController {
       }
     } catch (e) {
       logger.e('Failed to initialize notifications: $e');
-      Toast.showToast('Failed to initialize notifications');
+      Toast.showToast('Notifications may not work. Please check permissions.');
     }
   }
 
@@ -252,6 +251,13 @@ class GeofenceController extends GetxController {
           await openAppSettings();
           return;
         }
+        status = await Permission.notification.request();
+        if (!status.isGranted) {
+          logger.w('Notification permission denied');
+          Toast.showToast('Notification permission is required.');
+          await openAppSettings();
+          return;
+        }
         status = await Permission.ignoreBatteryOptimizations.request();
         if (!status.isGranted) {
           logger.w('Battery optimization not disabled');
@@ -365,7 +371,7 @@ class GeofenceController extends GetxController {
           Toast.showToast('Location access denied or unavailable: $e');
         },
       );
-      isTracking.value = true; // Set tracking state
+      isTracking.value = true;
       logger.i('Location tracking started');
     } catch (e) {
       logger.e('Failed to start location tracking: $e');
@@ -380,7 +386,7 @@ class GeofenceController extends GetxController {
       _locationTimer = null;
       _positionStream = null;
       FlutterBackgroundService().invoke('stopService');
-      isTracking.value = false; // Update tracking state
+      isTracking.value = false;
       logger.i('Location tracking stopped');
       Toast.showToast('Location tracking stopped');
     } catch (e) {
@@ -423,7 +429,6 @@ class GeofenceController extends GetxController {
           geofence.title,
           '$status ${geofence.title} at (${geofence.latitude.toStringAsFixed(4)}, ${geofence.longitude.toStringAsFixed(4)})',
         );
-        // Removed Get.snackbar to avoid duplicate alerts
         addHistory(History(
           timestamp: DateTime.now(),
           latitude: position.latitude,
@@ -478,13 +483,20 @@ class GeofenceController extends GetxController {
 
   static Future<void> showNotification(String title, String body) async {
     try {
+      if (Platform.isAndroid) {
+        var status = await Permission.notification.status;
+        if (!status.isGranted) {
+          logger.w('Notification permission not granted');
+          return;
+        }
+      }
       const AndroidNotificationDetails androidPlatformChannelSpecifics = AndroidNotificationDetails(
         'geofence_channel',
         'Geofence Notifications',
         channelDescription: 'Notifications for geofence entry and exit events',
         importance: Importance.high,
         priority: Priority.high,
-        icon: '@mipmap/ic_launcher', // Fixed icon reference
+        icon: '@mipmap/ic_launcher',
       );
       const DarwinNotificationDetails iosPlatformChannelSpecifics = DarwinNotificationDetails(
         presentSound: true,

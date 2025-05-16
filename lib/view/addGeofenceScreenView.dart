@@ -38,7 +38,6 @@ class AddGeofenceScreen extends StatelessWidget {
       },
       child: GetBuilder<AddGeoFenceController>(
         initState: (_){
-          geofenceController.requestPermissions().then((_) => geofenceController.startLocationTracking());
           addGeoFenceController.titleController.text = geofence?.title ?? '';
           addGeoFenceController.radiusController.text = geofence?.radius.toString() ?? '';
           addGeoFenceController.selectedLocation.value = geofence != null

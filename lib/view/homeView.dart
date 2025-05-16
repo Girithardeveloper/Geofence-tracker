@@ -20,7 +20,6 @@ class HomeScreen extends StatelessWidget {
 
     return GetBuilder<GeofenceController>(
       initState: (_){
-        geofenceController.requestPermissions().then((_) => geofenceController.startLocationTracking());
       },
       builder: (controller) {
         return Scaffold(
