@@ -1,129 +1,392 @@
 import 'dart:async';
 import 'dart:convert';
-
+import 'dart:io';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:geofence_tracker/helper/toaster.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:get/get.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../helper/logger.dart';
 import '../model/geoFenceHistoryModel.dart';
 import '../model/geoFenceModel.dart';
 
+@pragma('vm:entry-point')
 class GeofenceController extends GetxController {
-  var geofences = <Geofence>[].obs;
+  var geoFences = <Geofence>[].obs;
   var history = <History>[].obs;
   var currentPosition = Rxn<Position>();
+  var currentLat = ''.obs;
+  var currentLong = ''.obs;
+  var isTracking = false.obs; // Reintroduced isTracking
 
-
-  Position? resultPosition;
-
-
-  var currentLat;
-  var currentLong;
-
-  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-  FlutterLocalNotificationsPlugin();
-
+  static int _notificationId = 0;
+  static final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
   Timer? _locationTimer;
+  StreamSubscription<Position>? _positionStream;
 
   @override
   void onInit() {
     super.onInit();
-    loadGeofences();
-    loadHistory();
-    startLocationTracking();
-    requestPermissions();
+    logger.i('GeofenceController initialized');
+    initializeNotifications().then((_) {
+      initializeBackgroundService();
+      loadGeofences();
+      loadHistory();
+      requestPermissions().then((_) {
+        logger.i('Permissions granted, starting location tracking');
+        startLocationTracking();
+      }).catchError((e) {
+        logger.e('Error requesting permissions: $e');
+        Toast.showToast('Permission initialization failed');
+      });
+    }).catchError((e) {
+      logger.e('Error initializing notifications: $e');
+      Toast.showToast('Notification initialization failed');
+    });
   }
 
-  ///Google Map
-  getCurrentLocation()async{
-    resultPosition = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-    currentLat = resultPosition?.latitude.toString();
-    currentLong = resultPosition?.longitude.toString();
-   update();
-    logger.i('currentLatinlocation $currentLat');
-    logger.i('currentLonglocation $currentLong');
+  Future<void> initializeNotifications() async {
+    try {
+      const AndroidInitializationSettings initializationSettingsAndroid = AndroidInitializationSettings('@mipmap/ic_launcher');
+      const DarwinInitializationSettings initializationSettingsIOS = DarwinInitializationSettings(
+        requestSoundPermission: true,
+        requestBadgePermission: true,
+        requestAlertPermission: true,
+      );
+      const InitializationSettings initializationSettings = InitializationSettings(
+        android: initializationSettingsAndroid,
+        iOS: initializationSettingsIOS,
+      );
+      bool? initialized = await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+      if (initialized != true) {
+        logger.e('Notification initialization returned false');
+        throw Exception('Failed to initialize notifications');
+      }
+
+      if (Platform.isAndroid) {
+        const AndroidNotificationChannel backgroundChannel = AndroidNotificationChannel(
+          'geofence_background',
+          'Geofence Background Service',
+          description: 'Notification channel for geofence background service',
+          importance: Importance.low,
+        );
+        const AndroidNotificationChannel geofenceChannel = AndroidNotificationChannel(
+          'geofence_channel',
+          'Geofence Notifications',
+          description: 'Notifications for geofence entry and exit events',
+          importance: Importance.high,
+        );
+        final androidPlugin = flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+        await androidPlugin?.createNotificationChannel(backgroundChannel);
+        await androidPlugin?.createNotificationChannel(geofenceChannel);
+        logger.i('Notification channels created');
+      }
+    } catch (e) {
+      logger.e('Failed to initialize notifications: $e');
+      Toast.showToast('Failed to initialize notifications');
+    }
+  }
+
+  Future<void> initializeBackgroundService() async {
+    try {
+      final service = FlutterBackgroundService();
+      await service.configure(
+        androidConfiguration: AndroidConfiguration(
+          onStart: onBackgroundServiceStart,
+          autoStart: true,
+          isForegroundMode: true,
+          notificationChannelId: 'geofence_background',
+          initialNotificationTitle: 'Geofence Tracker',
+          initialNotificationContent: 'Monitoring location in background',
+          foregroundServiceNotificationId: 888,
+          foregroundServiceTypes: [AndroidForegroundType.location],
+        ),
+        iosConfiguration: IosConfiguration(
+          autoStart: true,
+          onForeground: onBackgroundServiceStart,
+          onBackground: onIosBackground,
+        ),
+      );
+      await service.startService();
+      logger.i('Background service initialized');
+    } catch (e) {
+      logger.e('Failed to initialize background service: $e');
+      Toast.showToast('Failed to start background service');
+    }
+  }
+
+  @pragma('vm:entry-point')
+  static void onBackgroundServiceStart(ServiceInstance service) async {
+    logger.i('Background service started');
+    try {
+      const AndroidInitializationSettings initializationSettingsAndroid = AndroidInitializationSettings('@mipmap/ic_launcher');
+      const DarwinInitializationSettings initializationSettingsIOS = DarwinInitializationSettings();
+      const InitializationSettings initializationSettings = InitializationSettings(
+        android: initializationSettingsAndroid,
+        iOS: initializationSettingsIOS,
+      );
+      await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+
+      if (service is AndroidServiceInstance) {
+        await service.setAsForegroundService();
+        service.setForegroundNotificationInfo(
+          title: 'Geofence Tracker',
+          content: 'Monitoring location in background',
+        );
+      }
+
+      final prefs = await SharedPreferences.getInstance();
+      final geofenceList = prefs.getString('geofences') ?? '[]';
+      final List<Geofence> geofences = (jsonDecode(geofenceList) as List).map((json) => Geofence.fromJson(json)).toList();
+
+      Timer.periodic(Duration(seconds: 60), (timer) async {
+        logger.i('Updating location in background');
+        try {
+          Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+          await _checkGeofencesInBackground(position, geofences);
+        } catch (e) {
+          logger.e('Background location update failed: $e');
+        }
+      });
+    } catch (e) {
+      logger.e('Error in background service start: $e');
+    }
+  }
+
+  @pragma('vm:entry-point')
+  static bool onIosBackground(ServiceInstance service) {
+    logger.i('iOS background service running');
+    Timer(Duration(seconds: 60), () async {
+      try {
+        Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+        final prefs = await SharedPreferences.getInstance();
+        final geofenceList = prefs.getString('geofences') ?? '[]';
+        final List<Geofence> geofences = (jsonDecode(geofenceList) as List).map((json) => Geofence.fromJson(json)).toList();
+        await _checkGeofencesInBackground(position, geofences);
+      } catch (e) {
+        logger.e('iOS background location update failed: $e');
+      }
+    });
+    return true;
+  }
+
+  static Future<void> _checkGeofencesInBackground(Position position, List<Geofence> geofences) async {
+    try {
+      final updates = _checkGeofencesIsolate({'position': position, 'geofences': geofences});
+      if (updates.isEmpty) {
+        logger.i('No geofence status changes detected in background');
+        return;
+      }
+      for (var update in updates) {
+        final index = update['index'] as int;
+        final status = update['status'] as String;
+        final geofence = geofences[index];
+        logger.i('Background geofence event: $status ${geofence.title}');
+        await showNotification(
+          geofence.title,
+          '$status ${geofence.title} at (${geofence.latitude.toStringAsFixed(4)}, ${geofence.longitude.toStringAsFixed(4)})',
+        );
+        final prefs = await SharedPreferences.getInstance();
+        final historyList = prefs.getString('history') ?? '[]';
+        final List<History> history = (jsonDecode(historyList) as List).map((json) => History.fromJson(json)).toList();
+        history.add(History(
+          timestamp: DateTime.now(),
+          latitude: position.latitude,
+          longitude: position.longitude,
+          status: status,
+        ));
+        await prefs.setString('history', jsonEncode(history.map((h) => h.toJson()).toList()));
+      }
+    } catch (e) {
+      logger.e('Error checking geofences in background: $e');
+    }
+  }
+
+  Future<void> getCurrentLocation() async {
+    try {
+      final position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      currentLat.value = position.latitude.toString();
+      currentLong.value = position.longitude.toString();
+      currentPosition.value = position;
+      logger.i('currentLat: ${currentLat.value}, currentLong: ${currentLong.value}');
+    } catch (e) {
+      logger.e('Failed to get current location: $e');
+      Toast.showToast('Failed to get location: $e');
+    }
   }
 
   Future<void> requestPermissions() async {
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      Get.snackbar('Error', 'Location services are disabled. Please enable them in settings.');
-      return;
-    }
-
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        Get.snackbar('Error', 'Location permissions are denied.');
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        logger.w('Location services disabled');
+        Toast.showToast('Location services are disabled. Please enable them.');
         return;
       }
-    }
 
-    if (permission == LocationPermission.deniedForever) {
-      Get.snackbar(
-        'Error',
-        'Location permissions are permanently denied. Please enable them in settings.',
-        snackPosition: SnackPosition.BOTTOM,
-        duration: Duration(seconds: 5),
-      );
-      await Geolocator.openAppSettings();
-      return;
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          logger.w('Location permission denied');
+          Toast.showToast('Location permissions are denied.');
+          return;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        logger.w('Location permission permanently denied');
+        Toast.showToast('Location permissions are permanently denied.');
+        await Geolocator.openAppSettings();
+        return;
+      }
+
+      if (Platform.isAndroid) {
+        var status = await Permission.locationAlways.request();
+        if (!status.isGranted) {
+          logger.w('Background location permission denied');
+          Toast.showToast('Background location permission is required.');
+          await openAppSettings();
+          return;
+        }
+        status = await Permission.ignoreBatteryOptimizations.request();
+        if (!status.isGranted) {
+          logger.w('Battery optimization not disabled');
+          Toast.showToast('Please disable battery optimization.');
+        }
+      }
+      logger.i('All required permissions granted');
+    } catch (e) {
+      logger.e('Failed to request permissions: $e');
+      Toast.showToast('Failed to request permissions: $e');
     }
   }
 
-
   Future<void> loadGeofences() async {
-    final prefs = await SharedPreferences.getInstance();
-    final geofenceList = prefs.getString('geofences') ?? '[]';
-    final List<dynamic> jsonList = jsonDecode(geofenceList);
-    geofences.assignAll(jsonList.map((json) => Geofence.fromJson(json)).toList());
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final geofenceList = prefs.getString('geofences') ?? '[]';
+      final List<dynamic> jsonList = jsonDecode(geofenceList);
+      geoFences.assignAll(jsonList.map((json) => Geofence.fromJson(json)).toList());
+      logger.i('Geofences loaded: ${geoFences.length}');
+    } catch (e) {
+      logger.e('Failed to load geofences: $e');
+    }
   }
 
   Future<void> loadHistory() async {
-    final prefs = await SharedPreferences.getInstance();
-    final historyList = prefs.getString('history') ?? '[]';
-    final List<dynamic> jsonList = jsonDecode(historyList);
-    history.assignAll(jsonList.map((json) => History.fromJson(json)).toList());
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final historyList = prefs.getString('history') ?? '[]';
+      final List<dynamic> jsonList = jsonDecode(historyList);
+      history.assignAll(jsonList.map((json) => History.fromJson(json)).toList());
+      logger.i('History loaded: ${history.length}');
+    } catch (e) {
+      logger.e('Failed to load history: $e');
+    }
   }
 
   Future<void> saveGeofences() async {
-    final prefs = await SharedPreferences.getInstance();
-    final jsonList = geofences.map((geofence) => geofence.toJson()).toList();
-    await prefs.setString('geofences', jsonEncode(jsonList));
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final jsonList = geoFences.map((geofence) => geofence.toJson()).toList();
+      await prefs.setString('geofences', jsonEncode(jsonList));
+      logger.i('Geofences saved');
+    } catch (e) {
+      logger.e('Failed to save geofences: $e');
+    }
   }
 
   Future<void> saveHistory() async {
-    final prefs = await SharedPreferences.getInstance();
-    final jsonList = history.map((entry) => entry.toJson()).toList();
-    await prefs.setString('history', jsonEncode(jsonList));
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final jsonList = history.map((entry) => entry.toJson()).toList();
+      await prefs.setString('history', jsonEncode(jsonList));
+      logger.i('History saved');
+    } catch (e) {
+      logger.e('Failed to save history: $e');
+    }
   }
 
   Future<void> addGeofence(Geofence geofence) async {
-    geofences.add(geofence);
-    await saveGeofences();
+    try {
+      geoFences.add(geofence);
+      await saveGeofences();
+      logger.i('Geofence added: ${geofence.title}');
+    } catch (e) {
+      logger.e('Failed to add geofence: $e');
+    }
   }
 
   Future<void> updateGeofence(int index, Geofence geofence) async {
-    geofences[index] = geofence;
-    await saveGeofences();
+    try {
+      geoFences[index] = geofence;
+      await saveGeofences();
+      logger.i('Geofence updated at index: $index');
+    } catch (e) {
+      logger.e('Failed to update geofence: $e');
+    }
   }
 
   Future<void> deleteGeofence(int index) async {
-    geofences.removeAt(index);
-    await saveGeofences();
+    try {
+      geoFences.removeAt(index);
+      await saveGeofences();
+      logger.i('Geofence deleted at index: $index');
+    } catch (e) {
+      logger.e('Failed to delete geofence: $e');
+    }
   }
 
   void startLocationTracking() {
-    _locationTimer = Timer.periodic(Duration(minutes: 2), (_) {
-      updateLocation();
-    });
+    try {
+      _locationTimer?.cancel();
+      _positionStream?.cancel();
 
-    Geolocator.getPositionStream().listen((Position position) {
-      currentPosition.value = position;
-      checkGeofences(position);
-    });
+      _locationTimer = Timer.periodic(Duration(seconds: 60), (_) async {
+        await updateLocation();
+      });
+
+      _positionStream = Geolocator.getPositionStream(
+        locationSettings: LocationSettings(
+          accuracy: LocationAccuracy.high,
+          distanceFilter: 20,
+        ),
+      ).listen(
+            (Position position) {
+          currentPosition.value = position;
+          checkGeofences(position);
+        },
+        onError: (e) {
+          logger.e('Location stream error: $e');
+          Toast.showToast('Location access denied or unavailable: $e');
+        },
+      );
+      isTracking.value = true; // Set tracking state
+      logger.i('Location tracking started');
+    } catch (e) {
+      logger.e('Failed to start location tracking: $e');
+      Toast.showToast('Failed to start location tracking: $e');
+    }
+  }
+
+  void stopLocationTracking() {
+    try {
+      _locationTimer?.cancel();
+      _positionStream?.cancel();
+      _locationTimer = null;
+      _positionStream = null;
+      FlutterBackgroundService().invoke('stopService');
+      isTracking.value = false; // Update tracking state
+      logger.i('Location tracking stopped');
+      Toast.showToast('Location tracking stopped');
+    } catch (e) {
+      logger.e('Failed to stop location tracking: $e');
+      Toast.showToast('Failed to stop tracking: $e');
+    }
   }
 
   Future<void> updateLocation() async {
@@ -134,29 +397,33 @@ class GeofenceController extends GetxController {
       currentPosition.value = position;
       checkGeofences(position);
     } catch (e) {
-      Get.snackbar('Error', 'Failed to get location: $e');
+      logger.e('Failed to update location: $e');
+      Toast.showToast('Failed to get location: $e');
     }
   }
 
-  void checkGeofences(Position position) {
-    for (var geofence in geofences) {
-      double distance = Geolocator.distanceBetween(
-        position.latitude,
-        position.longitude,
-        geofence.latitude,
-        geofence.longitude,
-      );
-
-      bool isInside = distance <= geofence.radius;
-
-      if (isInside != geofence.isInside) {
-        geofence.isInside = isInside;
-        updateGeofence(geofences.indexOf(geofence), geofence);
-
-        String status = isInside ? 'Entered' : 'Exited';
-        showNotification(geofence.title, '$status ${geofence.title}');
-        Get.snackbar('Geofence Update', '$status ${geofence.title}');
-
+  Future<void> checkGeofences(Position position) async {
+    try {
+      final result = await compute(_checkGeofencesIsolate, {
+        'position': position,
+        'geofences': geoFences.toList(),
+      });
+      if (result.isEmpty) {
+        logger.i('No geofence status changes detected');
+        return;
+      }
+      for (var update in result) {
+        final index = update['index'] as int;
+        final status = update['status'] as String;
+        final geofence = geoFences[index];
+        geofence.isInside = status == 'Entered';
+        geoFences[index] = geofence;
+        logger.i('Foreground geofence event: $status ${geofence.title}');
+        await showNotification(
+          geofence.title,
+          '$status ${geofence.title} at (${geofence.latitude.toStringAsFixed(4)}, ${geofence.longitude.toStringAsFixed(4)})',
+        );
+        // Removed Get.snackbar to avoid duplicate alerts
         addHistory(History(
           timestamp: DateTime.now(),
           latitude: position.latitude,
@@ -164,35 +431,86 @@ class GeofenceController extends GetxController {
           status: status,
         ));
       }
+    } catch (e) {
+      logger.e('Error checking geofences: $e');
+      Toast.showToast('Failed to check geofences: $e');
+    }
+  }
+
+  static List<Map<String, dynamic>> _checkGeofencesIsolate(Map<String, dynamic> data) {
+    try {
+      final position = data['position'] as Position;
+      final geofences = data['geofences'] as List<Geofence>;
+      final updates = <Map<String, dynamic>>[];
+      for (var i = 0; i < geofences.length; i++) {
+        final geofence = geofences[i];
+        double distance = Geolocator.distanceBetween(
+          position.latitude,
+          position.longitude,
+          geofence.latitude,
+          geofence.longitude,
+        );
+        bool isInside = distance <= geofence.radius;
+        if (isInside != geofence.isInside) {
+          String status = isInside ? 'Entered' : 'Exited';
+          updates.add({
+            'index': i,
+            'status': status,
+          });
+        }
+      }
+      return updates;
+    } catch (e) {
+      logger.e('Error in geofence isolate: $e');
+      return [];
     }
   }
 
   Future<void> addHistory(History entry) async {
-    history.add(entry);
-    await saveHistory();
+    try {
+      history.add(entry);
+      await saveHistory();
+      logger.i('History entry added');
+    } catch (e) {
+      logger.e('Failed to add history: $e');
+    }
   }
 
-  Future<void> showNotification(String title, String body) async {
-    const AndroidNotificationDetails androidPlatformChannelSpecifics =
-    AndroidNotificationDetails(
-      'geofence_channel',
-      'Geofence Notifications',
-      importance: Importance.max,
-      priority: Priority.high,
-    );
-    const NotificationDetails platformChannelSpecifics =
-    NotificationDetails(android: androidPlatformChannelSpecifics);
-    await flutterLocalNotificationsPlugin.show(
-      0,
-      title,
-      body,
-      platformChannelSpecifics,
-    );
+  static Future<void> showNotification(String title, String body) async {
+    try {
+      const AndroidNotificationDetails androidPlatformChannelSpecifics = AndroidNotificationDetails(
+        'geofence_channel',
+        'Geofence Notifications',
+        channelDescription: 'Notifications for geofence entry and exit events',
+        importance: Importance.high,
+        priority: Priority.high,
+        icon: '@mipmap/ic_launcher', // Fixed icon reference
+      );
+      const DarwinNotificationDetails iosPlatformChannelSpecifics = DarwinNotificationDetails(
+        presentSound: true,
+        presentAlert: true,
+        presentBadge: true,
+      );
+      const NotificationDetails platformChannelSpecifics = NotificationDetails(
+        android: androidPlatformChannelSpecifics,
+        iOS: iosPlatformChannelSpecifics,
+      );
+      await flutterLocalNotificationsPlugin.show(
+        _notificationId++,
+        title,
+        body,
+        platformChannelSpecifics,
+      );
+      logger.i('Notification shown: $title - $body');
+    } catch (e) {
+      logger.e('Failed to show notification: $e');
+    }
   }
 
   @override
   void onClose() {
-    _locationTimer?.cancel();
+    stopLocationTracking();
+    logger.i('GeofenceController closed');
     super.onClose();
   }
 }

@@ -18,11 +18,17 @@ A Flutter application for tracking geofences with background location updates an
 ## Required Dependencies
 
 - flutter
-- get: ^4.6.5
-- shared_preferences: ^2.2.2
-- geolocator: ^9.0.2
-- google_maps_flutter: ^2.5.0
-- flutter_local_notifications: ^15.1.0+1
+  get: ^4.7.2
+  logger: ^2.5.0
+  fluttertoast: ^8.2.12
+  flutter_local_notifications: ^19.2.0
+  flutter_background_service: ^5.1.0
+  google_maps_flutter: ^2.12.1
+  geolocator: ^9.0.2
+  permission_handler: ^12.0.0+1
+  shared_preferences: ^2.5.3
+  flutter_background_service_android: ^6.3.0
+  rxdart: ^0.28.0
 
 ## Testing Guidelines
 
