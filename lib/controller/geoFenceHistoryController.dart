@@ -103,7 +103,7 @@ class GeoFenceHistoryController extends GetxController {
   }
 
   Future<void> getPolylinesForHistory({int limit = 50}) async {
-    String googleApiKey = 'AIzaSyBhkGfnq27sN0wV5y_S-M2KojpFTk_by-Q';
+    String googleApiKey = 'YOUR_API_KEY_HERE';
     if (googleApiKey.isEmpty) {
       logger.e('Google Maps API key is missing');
       Toast.showToast('API key not configured');
