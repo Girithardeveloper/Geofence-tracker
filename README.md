@@ -17,9 +17,9 @@ A Flutter application for tracking geofences with background location updates an
 
 ## Example
 
-| HomeScreen                                                                                                                              | Add Geofence Screen                                                                                    | Geofence History                                                                                                                     |
-|-----------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
-| <img src="https://ik.imagekit.io/6ilngyaqa/1747481518559-Screenshot_2025_0517_165548_FzUuXtMXxI.jpg" width="200" alt="SpinCircleFade"/> | <img src="https://ik.imagekit.io/6ilngyaqa/1747481595940-Screenshot_2025_0517_165558_x1Jm4Ub7pM.jpg"/> | <img src="https://ik.imagekit.io/6ilngyaqa/1747481636052-Screenshot_2025_0517_165607_Dm5va3QC5.jpg" width="200" alt="CircleBounce"/> |
+| HomeScreen                                                                                             | Add Geofence Screen                                                                                    | Geofence History                                                                                      |
+|--------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------|
+| <img src="https://ik.imagekit.io/6ilngyaqa/1747481518559-Screenshot_2025_0517_165548_FzUuXtMXxI.jpg"/> | <img src="https://ik.imagekit.io/6ilngyaqa/1747481595940-Screenshot_2025_0517_165558_x1Jm4Ub7pM.jpg"/> | <img src="https://ik.imagekit.io/6ilngyaqa/1747481636052-Screenshot_2025_0517_165607_Dm5va3QC5.jpg"/> |
 
 
 
