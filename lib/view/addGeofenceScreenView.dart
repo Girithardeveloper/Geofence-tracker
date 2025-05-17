@@ -33,7 +33,7 @@ class AddGeofenceScreen extends StatelessWidget {
 
     return WillPopScope(
       onWillPop: ()async{
-        Get.back();
+        Get.off(()=>HomeScreen());
         return false;
       },
       child: GetBuilder<AddGeoFenceController>(
@@ -43,6 +43,8 @@ class AddGeofenceScreen extends StatelessWidget {
           addGeoFenceController.selectedLocation.value = geofence != null
               ? LatLng(geofence!.latitude, geofence!.longitude)
               : null;
+          geofenceController.requestPermissions().then((_) => geofenceController.startLocationTracking());
+
           addGeoFenceController.getInitialPosition();
         },
         builder: (controller) {
@@ -60,7 +62,7 @@ class AddGeofenceScreen extends StatelessWidget {
                       splashColor: Colors.transparent,
                       hoverColor:  Colors.transparent,
                     onTap: (){
-                      Get.back();
+                      Get.off(()=>HomeScreen());
                     },
                       child: Icon(Icons.arrow_back,color: ColorConstants.secondaryColor,size: 26,)),
                   SizedBox(width:screenSize.width*0.04 ,),
@@ -130,6 +132,9 @@ class AddGeofenceScreen extends StatelessWidget {
                               child: GoogleMap(
                                 buildingsEnabled: true,
                                 compassEnabled: true,
+                                myLocationEnabled: true,
+                                myLocationButtonEnabled: true,
+                                mapToolbarEnabled: true,
                                 initialCameraPosition: CameraPosition(
                                   target: controller.initialPosition.value,
                                   zoom: 15,

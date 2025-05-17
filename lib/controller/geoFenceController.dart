@@ -2,11 +2,17 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
+import 'package:flutter_background_service_android/flutter_background_service_android.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:geofence_tracker/constants/colorConstants.dart';
+import 'package:geofence_tracker/constants/fontConstants.dart';
+import 'package:geofence_tracker/globalWidgets/textWidget.dart';
 import 'package:geofence_tracker/helper/toaster.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:get/get.dart';
+import 'package:location/location.dart' as location;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../helper/logger.dart';
@@ -26,27 +32,7 @@ class GeofenceController extends GetxController {
   static final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
   Timer? _locationTimer;
   StreamSubscription<Position>? _positionStream;
-
-  @override
-  void onInit() {
-    super.onInit();
-    logger.i('GeofenceController initialized');
-    initializeNotifications().then((_) {
-      loadGeofences();
-      loadHistory();
-      requestPermissions().then((_) {
-        logger.i('Permissions granted, starting background service and tracking');
-        initializeBackgroundService();
-        startLocationTracking();
-      }).catchError((e) {
-        logger.e('Error requesting permissions: $e');
-        Toast.showToast('Permission initialization failed');
-      });
-    }).catchError((e) {
-      logger.e('Error initializing notifications: $e');
-      Toast.showToast('Notification initialization failed');
-    });
-  }
+  Timer? _permissionRecheckTimer;
 
   Future<void> initializeNotifications() async {
     try {
@@ -110,7 +96,7 @@ class GeofenceController extends GetxController {
         ),
       );
       await service.startService();
-      logger.i('Background service initialized');
+      logger.i('Background service initialized and started');
     } catch (e) {
       logger.e('Failed to initialize background service: $e');
       Toast.showToast('Failed to start background service');
@@ -121,6 +107,13 @@ class GeofenceController extends GetxController {
   static void onBackgroundServiceStart(ServiceInstance service) async {
     logger.i('Background service started');
     try {
+      if (Platform.isAndroid) {
+        var status = await Permission.notification.status;
+        if (!status.isGranted) {
+          logger.w('Notification permission not granted for background service');
+          return;
+        }
+      }
       const AndroidInitializationSettings initializationSettingsAndroid = AndroidInitializationSettings('@mipmap/ic_launcher');
       const DarwinInitializationSettings initializationSettingsIOS = DarwinInitializationSettings();
       const InitializationSettings initializationSettings = InitializationSettings(
@@ -196,6 +189,7 @@ class GeofenceController extends GetxController {
           latitude: position.latitude,
           longitude: position.longitude,
           status: status,
+          geofenceTitle: geofence.title, // Add geofence title
         ));
         await prefs.setString('history', jsonEncode(history.map((h) => h.toJson()).toList()));
       }
@@ -210,7 +204,7 @@ class GeofenceController extends GetxController {
       currentLat.value = position.latitude.toString();
       currentLong.value = position.longitude.toString();
       currentPosition.value = position;
-      logger.i('currentLat: ${currentLat.value}, currentLong: ${currentLong.value}');
+      logger.i('Current location: Lat: ${currentLat.value}, Long: ${currentLong.value}');
     } catch (e) {
       logger.e('Failed to get current location: $e');
       Toast.showToast('Failed to get location: $e');
@@ -219,57 +213,110 @@ class GeofenceController extends GetxController {
 
   Future<void> requestPermissions() async {
     try {
+      bool canStartService = true;
+
+      // Check location services
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
         logger.w('Location services disabled');
-        Toast.showToast('Location services are disabled. Please enable them.');
-        return;
+        openAppSettings();
+
+        serviceEnabled = await Geolocator.isLocationServiceEnabled();
+        if (!serviceEnabled) {
+          logger.w('Location services still disabled');
+          Toast.showToast('Location services are required for tracking.');
+          canStartService = false;
+        }
       }
 
+      // Request foreground location permission
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) {
-          logger.w('Location permission denied');
-          Toast.showToast('Location permissions are denied.');
-          return;
+          logger.w('Foreground location permission denied');
+          Toast.showToast('Please allow location access.');
+          canStartService = false;
         }
       }
 
       if (permission == LocationPermission.deniedForever) {
-        logger.w('Location permission permanently denied');
-        Toast.showToast('Location permissions are permanently denied.');
-        await Geolocator.openAppSettings();
-        return;
+        logger.w('Foreground location permission permanently denied');
+        openAppSettings();
+        permission = await Geolocator.checkPermission();
+        if (permission == LocationPermission.deniedForever) {
+          logger.w('Foreground location permission still denied forever');
+          Toast.showToast('Location permission is required for tracking.');
+          canStartService = false;
+        }
       }
 
-      if (Platform.isAndroid) {
-        var status = await Permission.locationAlways.request();
+      if (Platform.isAndroid && canStartService) {
+        // Request background location permission
+        var status = await Permission.locationAlways.status;
         if (!status.isGranted) {
-          logger.w('Background location permission denied');
-          Toast.showToast('Background location permission is required.');
-          await openAppSettings();
-          return;
+          status = await Permission.locationAlways.request();
+          if (!status.isGranted) {
+            logger.w('Background location permission denied');
+            openAppSettings();
+            status = await Permission.locationAlways.status;
+            if (!status.isGranted) {
+              logger.w('Background location permission still denied');
+              Toast.showToast('Background location access is required.');
+              canStartService = false;
+            }
+          }
         }
-        status = await Permission.notification.request();
+
+        // Request notification permission
+        status = await Permission.notification.status;
         if (!status.isGranted) {
-          logger.w('Notification permission denied');
-          Toast.showToast('Notification permission is required.');
-          await openAppSettings();
-          return;
+          status = await Permission.notification.request();
+          if (!status.isGranted) {
+            logger.w('Notification permission denied');
+            openAppSettings();
+
+            status = await Permission.notification.status;
+            if (!status.isGranted) {
+              logger.w('Notification permission still denied');
+              Toast.showToast('Notifications are required for geofence alerts.');
+              canStartService = false;
+            }
+          }
         }
-        status = await Permission.ignoreBatteryOptimizations.request();
+
+        // Request battery optimization exemption
+        status = await Permission.ignoreBatteryOptimizations.status;
         if (!status.isGranted) {
-          logger.w('Battery optimization not disabled');
-          Toast.showToast('Please disable battery optimization.');
+          status = await Permission.ignoreBatteryOptimizations.request();
+          if (!status.isGranted) {
+            logger.w('Battery optimization not disabled');
+            openAppSettings();
+
+            status = await Permission.ignoreBatteryOptimizations.status;
+            if (!status.isGranted) {
+              logger.w('Battery optimization still not disabled');
+              Toast.showToast('Disabling battery optimization is recommended.');
+              // Optional: Proceed even if not granted
+            }
+          }
         }
       }
-      logger.i('All required permissions granted');
+
+      if (canStartService) {
+        logger.i('All required permissions granted, starting service');
+        await initializeBackgroundService();
+        startLocationTracking();
+      } else {
+        logger.w('Some permissions missing, service not started');
+        Toast.showToast('Please grant all permissions to enable tracking.');
+      }
     } catch (e) {
       logger.e('Failed to request permissions: $e');
       Toast.showToast('Failed to request permissions: $e');
     }
   }
+
 
   Future<void> loadGeofences() async {
     try {
@@ -288,7 +335,35 @@ class GeofenceController extends GetxController {
       final prefs = await SharedPreferences.getInstance();
       final historyList = prefs.getString('history') ?? '[]';
       final List<dynamic> jsonList = jsonDecode(historyList);
-      history.assignAll(jsonList.map((json) => History.fromJson(json)).toList());
+      final List<History> loadedHistory = jsonList.map((json) => History.fromJson(json)).toList();
+
+      // Migrate old entries to include geofenceTitle (optional)
+      for (var entry in loadedHistory) {
+        if (entry.geofenceTitle == null) {
+          // Find the closest geofence based on coordinates
+          Geofence? closestGeofence;
+          double minDistance = double.infinity;
+          for (var geofence in geoFences) {
+            double distance = Geolocator.distanceBetween(
+              entry.latitude,
+              entry.longitude,
+              geofence.latitude,
+              geofence.longitude,
+            );
+            if (distance < minDistance && distance <= geofence.radius) {
+              minDistance = distance;
+              closestGeofence = geofence;
+            }
+          }
+          if (closestGeofence != null) {
+            entry.geofenceTitle = closestGeofence.title;
+          } else {
+            entry.geofenceTitle = 'Unknown Geofence';
+          }
+        }
+      }
+
+      history.assignAll(loadedHistory);
       logger.i('History loaded: ${history.length}');
     } catch (e) {
       logger.e('Failed to load history: $e');
@@ -347,8 +422,15 @@ class GeofenceController extends GetxController {
     }
   }
 
-  void startLocationTracking() {
+
+  Future<void> startLocationTracking() async {
     try {
+      bool isPermissionGranted = await _checkLocationPermission();
+      if (!isPermissionGranted) {
+        logger.w('Location permission not granted');
+        return;
+      }
+
       _locationTimer?.cancel();
       _positionStream?.cancel();
 
@@ -371,6 +453,7 @@ class GeofenceController extends GetxController {
           Toast.showToast('Location access denied or unavailable: $e');
         },
       );
+
       isTracking.value = true;
       logger.i('Location tracking started');
     } catch (e) {
@@ -379,21 +462,49 @@ class GeofenceController extends GetxController {
     }
   }
 
-  void stopLocationTracking() {
+  Future<bool> _checkLocationPermission() async {
     try {
-      _locationTimer?.cancel();
-      _positionStream?.cancel();
-      _locationTimer = null;
-      _positionStream = null;
-      FlutterBackgroundService().invoke('stopService');
-      isTracking.value = false;
-      logger.i('Location tracking stopped');
-      Toast.showToast('Location tracking stopped');
+      final locationService = location.Location();
+
+      bool serviceEnabled = await locationService.serviceEnabled();
+      if (!serviceEnabled) {
+        serviceEnabled = await locationService.requestService();
+        if (!serviceEnabled) {
+          logger.w("Location service is disabled.");
+          return false;
+        }
+      }
+
+      final status = await Permission.location.status;
+
+      if (status.isGranted) {
+        return true;
+      } else if (status.isDenied) {
+        final newStatus = await Permission.location.request();
+        if (newStatus.isGranted) {
+          return true;
+        } else if (newStatus.isPermanentlyDenied) {
+          openAppSettings();
+          Toast.showToast('Please enable location permission in settings.');
+          return false;
+        } else {
+          logger.i("Location permission denied.");
+          return false;
+        }
+      } else if (status.isPermanentlyDenied) {
+        openAppSettings();
+        Toast.showToast('Please enable location permission in settings.');
+        return false;
+      }
+
+      return false;
     } catch (e) {
-      logger.e('Failed to stop location tracking: $e');
-      Toast.showToast('Failed to stop tracking: $e');
+      logger.e("Permission check error: $e");
+      return false;
     }
   }
+
+
 
   Future<void> updateLocation() async {
     try {
@@ -434,6 +545,7 @@ class GeofenceController extends GetxController {
           latitude: position.latitude,
           longitude: position.longitude,
           status: status,
+          geofenceTitle: geofence.title, // Add geofence title
         ));
       }
     } catch (e) {
@@ -475,7 +587,7 @@ class GeofenceController extends GetxController {
     try {
       history.add(entry);
       await saveHistory();
-      logger.i('History entry added');
+      logger.i('History entry added: ${entry.status} for ${entry.geofenceTitle ?? "unknown"}');
     } catch (e) {
       logger.e('Failed to add history: $e');
     }
@@ -519,9 +631,36 @@ class GeofenceController extends GetxController {
     }
   }
 
+
+  @override
+  void onInit() {
+    super.onInit();
+    logger.i('GeofenceController initialized');
+    initializeNotifications().then((_) {
+      loadGeofences();
+      loadHistory();
+      requestPermissions();
+    }).catchError((e) {
+      logger.e('Error initializing notifications: $e');
+      Toast.showToast('Notification initialization failed');
+    });
+  }
+
+  @override
+  void onReady() {
+    super.onReady();
+    // Recheck permissions after a delay to ensure activity is restored
+    _permissionRecheckTimer?.cancel();
+    _permissionRecheckTimer = Timer(const Duration(seconds: 2), () {
+      requestPermissions();
+    });
+  }
+
   @override
   void onClose() {
-    stopLocationTracking();
+    _locationTimer?.cancel();
+    _positionStream?.cancel();
+    _permissionRecheckTimer?.cancel();
     logger.i('GeofenceController closed');
     super.onClose();
   }

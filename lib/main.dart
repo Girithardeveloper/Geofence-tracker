@@ -10,19 +10,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 
 void main() async {
+
   WidgetsFlutterBinding.ensureInitialized();
-
-  /// Initialize SharedPreferences
-  await SharedPreferences.getInstance();
-
-  /// Initialize notifications
-  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-  FlutterLocalNotificationsPlugin();
-  const AndroidInitializationSettings initializationSettingsAndroid =
-  AndroidInitializationSettings('@mipmap/ic_launcher'); // Use launcher icon
-  const InitializationSettings initializationSettings =
-  InitializationSettings(android: initializationSettingsAndroid);
-  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
 
   /// Orientation
   await SystemChrome.setPreferredOrientations([
@@ -35,6 +24,20 @@ void main() async {
       statusBarIconBrightness: Brightness.dark,
     ),
   );
+
+
+
+  /// Initialize SharedPreferences
+  await SharedPreferences.getInstance();
+
+  /// Initialize notifications
+  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+  FlutterLocalNotificationsPlugin();
+  const AndroidInitializationSettings initializationSettingsAndroid =
+  AndroidInitializationSettings('@mipmap/ic_launcher'); // Use launcher icon
+  const InitializationSettings initializationSettings =
+  InitializationSettings(android: initializationSettingsAndroid);
+  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
 
   runApp(const MyApp());
 }

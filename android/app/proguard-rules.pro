@@ -1,43 +1,21 @@
-# Flutter keep rules
--keep class io.flutter.app.** { *; }
--keep class io.flutter.plugin.**  { *; }
--keep class io.flutter.util.**  { *; }
--keep class io.flutter.view.**  { *; }
--keep class io.flutter.**  { *; }
--keep class io.flutter.plugins.**  { *; }
--keep class io.flutter.embedding.** { *; }
--dontwarn io.flutter.embedding.**
-
-# AndroidX Lifecycle
--keep class androidx.lifecycle.** { *; }
-
-# Permission Handler
--keep class com.baseflow.permissionhandler.** { *; }
-
-
-
-# Flutter
+# Keep Flutter classes
 -keep class io.flutter.** { *; }
 -dontwarn io.flutter.**
 
-# flutter_background_service
+# Keep flutter_background_service classes
 -keep class com.pravera.flutter_background_service.** { *; }
+-dontwarn com.pravera.flutter_background_service.**
 
-# flutter_local_notifications
--keep class com.dexterous.flutterlocalnotifications.** { *; }
-
-# geolocator
+# Keep Geolocator classes
 -keep class com.baseflow.geolocator.** { *; }
+-dontwarn com.baseflow.geolocator.**
 
-# Google Play Services (Maps)
+# Keep Google Play services classes
 -keep class com.google.android.gms.** { *; }
 -dontwarn com.google.android.gms.**
 
-# GetX
--keep class get.** { *; }
-
-# Shared Preferences
--keep class androidx.preference.** { *; }
-
-# Keep annotations
+# Prevent R8/ProGuard from stripping interfaces and annotations
 -keepattributes *Annotation*
+-keepattributes Signature
+-keepattributes InnerClasses
+-keepattributes EnclosingMethod

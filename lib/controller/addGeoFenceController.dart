@@ -35,9 +35,8 @@ class AddGeoFenceController extends GetxController{
       );
     } catch (e) {
       logger.e('Failed to get initial position: $e');
-      Get.snackbar('Error', 'Unable to get current location',);
       // Fallback to a default location (e.g., city center)
-      initialPosition.value = const LatLng(37.7749, -122.4194); // San Francisco
+      initialPosition.value = const LatLng(11.005064, 76.950846); // San Francisco
       selectedLocation.value ??= initialPosition.value;
     }
   }

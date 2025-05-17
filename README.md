@@ -15,20 +15,31 @@ A Flutter application for tracking geofences with background location updates an
     - Open `ios/Runner.xcworkspace` in Xcode
     - Build and run on simulator or device
 
+## Example
+
+| HomeScreen                                                                                                                              | Add Geofence Screen                                                                                    | Geofence History                                                                                                                     |
+|-----------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
+| <img src="https://ik.imagekit.io/6ilngyaqa/1747481518559-Screenshot_2025_0517_165548_FzUuXtMXxI.jpg" width="200" alt="SpinCircleFade"/> | <img src="https://ik.imagekit.io/6ilngyaqa/1747481595940-Screenshot_2025_0517_165558_x1Jm4Ub7pM.jpg"/> | <img src="https://ik.imagekit.io/6ilngyaqa/1747481636052-Screenshot_2025_0517_165607_Dm5va3QC5.jpg" width="200" alt="CircleBounce"/> |
+
+
+
 ## Required Dependencies
 
 - flutter
-  get: ^4.7.2
-  logger: ^2.5.0
-  fluttertoast: ^8.2.12
-  flutter_local_notifications: ^19.2.0
-  flutter_background_service: ^5.1.0
-  google_maps_flutter: ^2.12.1
-  geolocator: ^9.0.2
-  permission_handler: ^12.0.0+1
-  shared_preferences: ^2.5.3
-  flutter_background_service_android: ^6.3.0
-  rxdart: ^0.28.0
+  - cupertino_icons: ^1.0.8
+  - get: ^4.7.2
+  - logger: ^2.5.0
+  - fluttertoast: ^8.2.12
+  - location: ^8.0.0
+  - flutter_local_notifications: ^19.2.0
+  - flutter_background_service: ^5.1.0
+  - google_maps_flutter: ^2.12.1
+  - geolocator: ^9.0.2
+  - permission_handler: ^12.0.0+1
+  - shared_preferences: ^2.5.3
+  - rxdart: ^0.28.0
+  - intl: ^0.19.0
+  - flutter_polyline_points: ^2.1.0
 
 ## Testing Guidelines
 

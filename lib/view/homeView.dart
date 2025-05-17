@@ -20,6 +20,8 @@ class HomeScreen extends StatelessWidget {
 
     return GetBuilder<GeofenceController>(
       initState: (_){
+        geofenceController.requestPermissions().then((_) => geofenceController.startLocationTracking());
+
       },
       builder: (controller) {
         return Scaffold(
@@ -60,15 +62,15 @@ class HomeScreen extends StatelessWidget {
               return Card(
                 color: ColorConstants.secondaryColor,
                 child: ListTile(
-                  title: ReusableTextWidget(text:geofence.title,fontWeight: FontWeight.bold,fontSize: 18,fontFamily: FontConstants.fontFamily,color: ColorConstants.primaryColor,maxLines: 1,),
+                  title: ReusableTextWidget(text:geofence.title,fontWeight: FontWeight.bold,fontSize: 18,fontFamily: FontConstants.fontFamily,color: ColorConstants.primaryColor,maxLines: 2,),
                   subtitle: ReusableTextWidget(
-                   text:  'Lat: ${geofence.latitude.toStringAsFixed(4)}, '
+                   text:  'Lat: ${geofence.latitude.toStringAsFixed(4)}\n'
                         'Long: ${geofence.longitude.toStringAsFixed(4)}\n'
                         'Radius: ${geofence.radius} m',
                     fontSize: 16,
                     fontFamily: FontConstants.fontFamily,
                     color: ColorConstants.blackColor,
-                    // maxLines: 2,
+                    maxLines: 15,
 
                   ),
                   trailing: Row(
